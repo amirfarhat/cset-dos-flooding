@@ -1,0 +1,110 @@
+set ns [new Simulator]
+source tb_compat.tcl
+
+# Notes:
+# 1. You will need to reconfigure the path of the setup script to point to your own location.
+
+# For ease of understanding, we partition the set of available
+# machines on DeterLab by hardware capability and location. Hardware
+# capability is imprtant for controlling experiment representations
+# of real world deployed hardware, while location helps to control inter-
+# machine latency. Generally, machines that are allocated in the same
+# geographic area are easier to allocate on DeterLab.
+#
+# At the time of our experiments, we had better experience working with
+# machines at ISI.
+
+# These are machines at UC Berkeley.
+tb-make-soft-vtype ucb_good_or_better_hardware {bpc2133}
+tb-make-soft-vtype ucb_any_hardware {bpc2133 bpc2800 bpc3000 bpc3060 bvx2200}
+
+# These are machines at USC ISI.
+tb-make-soft-vtype isi_fantastic_or_better_hardware {dl380g3 dl360g8-6p smX10 sm}
+tb-make-soft-vtype isi_great_or_better_hardware {MicroCloud dl380g3 dl360g8-6p smX10 sm}
+tb-make-soft-vtype isi_good_or_better_hardware {pc2133 MicroCloud dl380g3 dl360g8-6p smX10 sm}
+tb-make-soft-vtype isi_any_hardware {pc3000 pc3060 pc2133 MicroCloud dl380g3 dl360g8-6p smX10 sm}
+
+# These are machines at both UC Berkeley and USC ISI.
+tb-make-soft-vtype e_fantastic_or_better_hardware {dl380g3 dl360g8-6p smX10 sm}
+tb-make-soft-vtype e_great_or_better_hardware {MicroCloud dl380g3 dl360g8-6p smX10 sm}
+tb-make-soft-vtype e_good_or_better_hardware {bpc2133 pc2133 MicroCloud dl380g3 dl360g8-6p smX10 sm}
+tb-make-soft-vtype e_any_hardware {bpc2800 bpc3000 bpc3060 bvx2200 pc3000 pc3060 bpc2133 pc2133 MicroCloud dl380g3 dl360g8-6p smX10 sm}
+
+
+# Set up IoT proxy machine.
+set proxy [$ns node]
+tb-set-node-os $proxy Ubuntu1804-STD
+tb-set-hardware $proxy MicroCloud
+tb-set-node-startcmd $proxy "bash /proj/MIT-DoS/exp/coap-setup/deps/dos-californium/deter/scripts/node_setup.sh"
+
+# Set up HTTP(S) server machine.
+set originserver [$ns node]
+tb-set-node-os $originserver Ubuntu1804-STD
+tb-set-hardware $originserver MicroCloud
+tb-set-node-startcmd $originserver "bash /proj/MIT-DoS/exp/coap-setup/deps/dos-californium/deter/scripts/node_setup.sh"
+
+# Set up client machines.
+set client1 [$ns node]
+tb-set-node-os $client1 Ubuntu1804-STD
+tb-set-hardware $client1 isi_any_hardware
+tb-set-node-startcmd $client1 "bash /proj/MIT-DoS/exp/coap-setup/deps/dos-californium/deter/scripts/node_setup.sh"
+
+# Set up attacker machine.
+set attacker [$ns node]
+tb-set-node-os $attacker Ubuntu1804-STD
+tb-set-hardware $attacker isi_any_hardware
+tb-set-node-startcmd $attacker "bash /proj/MIT-DoS/exp/coap-setup/deps/dos-californium/deter/scripts/node_setup.sh"
+
+# Set up receiver machine.
+set receiver [$ns node]
+tb-set-node-os $receiver Ubuntu1804-STD
+tb-set-hardware $receiver isi_any_hardware
+tb-set-node-startcmd $receiver "bash /proj/MIT-DoS/exp/coap-setup/deps/dos-californium/deter/scripts/node_setup.sh"
+
+
+# Due to the limited number of experimental ports in DeterLab
+# machines, and to better approximate real world deployments,
+# we set up some routers which route intermediate data between 
+# experiment machines.
+set routerhome [$ns node]
+set routerinternet [$ns node]
+set routercloud [$ns node]
+tb-set-hardware $routerhome isi_any_hardware
+tb-set-hardware $routerinternet isi_any_hardware
+tb-set-hardware $routercloud isi_any_hardware
+tb-set-node-os $routerhome Ubuntu1804-STD
+tb-set-node-os $routerinternet Ubuntu1804-STD
+tb-set-node-os $routercloud Ubuntu1804-STD
+
+# Define aliases for core but sometimes variable link bandwidths.
+set attackrate 1000Mbps
+set internetlink 1000Mbps
+
+# In our experiment, clients are all connected via a home LAN.
+set lanhome [$ns make-lan "routerhome client1" 100Mbps 0ms]
+
+# Define the links between machines/LANs which interconnect the 
+# nodes in the experiment, along with bandwidths, latencies, and
+# queuing philosophy.
+set linkinternet [$ns duplex-link routerhome routerinternet $internetlink 20ms DropTail]
+set linkcloud    [$ns duplex-link routerinternet routercloud $internetlink 0ms DropTail]
+set linkattacker [$ns duplex-link routerinternet attacker $attackrate 0ms DropTail]
+set linkproxy    [$ns duplex-link routercloud proxy $internetlink 0ms DropTail]
+set linkserver   [$ns duplex-link routercloud originserver $internetlink 5ms DropTail]
+set linkreceiver [$ns duplex-link routercloud receiver $internetlink 5ms DropTail]
+
+# Assign all core experiment machines static IP addresses to assist
+# with later analysis that is based on packet captures.
+#
+# Note that if client and proxy are in the same LAN, they need to have
+# the same IP address prefix, or the experiment's behavior is undefined.
+tb-set-ip $originserver 10.1.1.1
+tb-set-ip $receiver 10.1.2.1
+tb-set-ip $attacker 10.1.3.1
+tb-set-ip $proxy 10.1.88.1
+tb-set-ip $client1 10.1.5.1
+
+tb-use-endnodeshaping 1
+tb-force-endnodeshaping 1
+$ns rtproto Static
+$ns run
