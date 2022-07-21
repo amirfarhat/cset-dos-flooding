@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Exit if any subquery has non-zero exit status.
+set -e
+
 SCRIPT_HOME=$(dirname $(readlink -f $0))
 UTILS_PATH="$SCRIPT_HOME/shell_utils.sh"
 
@@ -9,7 +12,7 @@ source $UTILS_PATH
 usage() {
   cat <<EOM
   Usage:
-    $(basename $0) -e exp_name_inputs -d db_name -c clean_before_processing -f use_file_based_grouping -s skip_grouping -h clickhouse
+    $(basename $0) -e exp_name_inputs -d db_name -c clean_before_processing -f use_file_based_grouping -s skip_grouping -h clickhouse -o only_clean
     exp_name_inputs         - the names of the experiment that this script will process. Should
                               be comma-separated. Supports the use of wildcard in names. Experiment
                               names must not be zipped or compressed.
@@ -19,6 +22,7 @@ usage() {
     skip_grouping           - flag to determine whether we only want to bulk process experiments without grouping
     clickhouse              - flag to determine whether experiment data is to be grouped in clickhouse, if not file-based grouping.
                               Defaults to PostgreSQL otherwise
+    only_clean              - flag to choose only to clean experiments
 EOM
 }
 
@@ -27,7 +31,8 @@ clean_before_processing=0
 use_file_based_grouping=0
 skip_grouping=0
 clickhouse=0
-while getopts e:d:cfsh opt; do
+only_clean=0
+while getopts e:d:cfsho opt; do
   case $opt in
     e) exp_name_inputs=$OPTARG;;
     d) db_name=$OPTARG;;
@@ -35,6 +40,7 @@ while getopts e:d:cfsh opt; do
     f) use_file_based_grouping=1;;
     s) skip_grouping=1;;
     h) clickhouse=1;;
+    o) only_clean=1;;
     *) usage
        exit 1;;
   esac
@@ -58,7 +64,7 @@ mkdir -p $log_dir
 # Split input exp_names by comma into bash array exp_name_inputs_array
 readarray -td, exp_name_inputs_array <<<"$exp_name_inputs,"; unset 'exp_name_inputs_array[-1]';
 
-# Assert that there are no zip files
+# Assert that there are no zip files in supplied names
 for e in ${exp_name_inputs_array[@]}; do
   if [[ $e == *.zip ]]; then
     echo "Experiment $e is a .zip file, this is not allowed"
@@ -66,30 +72,49 @@ for e in ${exp_name_inputs_array[@]}; do
   fi
 done
 
-# Collect all experiment directories and names found
-exp_dirs_found=()
-exp_names_found=()
+# Now enable filename globbing to retain regex 
+# properties right before processing.
+set +f 
+
+# Find the collection of matching experiments. Look for
+# zip-terminated experiment files since all experiments
+# have a zip-terminated original file.
+declare -A unzipped_exp_name_map_zipped_exp_dir
 for e in ${exp_name_inputs_array[@]}; do
   num_dirs_found=$(find $EXPERIMENT_HOME/$e -maxdepth 0 -type d 2> /dev/null | wc -l)
-  if [[ $num_dirs_found == 0 ]]; then
-    num_zips_found=$(find $EXPERIMENT_HOME/$e.zip -maxdepth 0 -type f 2> /dev/null | wc -l)
-    if [[ $num_zips_found == 0 ]]; then
-      echo "Experiment $e not found."
-      exit 1
-    else
-      for exp_zip in $(find $EXPERIMENT_HOME/$e.zip -maxdepth 0 -type f); do
-        exp_name=$(basename $exp_zip)
-        exp_dirs_found+=($exp_zip)
-        exp_names_found+=($exp_name)
-      done
-    fi
-  else
-    for exp_dir in $(find $EXPERIMENT_HOME/$e -maxdepth 0 -type d); do
-      exp_name=$(basename $exp_dir)
-      exp_dirs_found+=($exp_dir)
-      exp_names_found+=($exp_name)
-    done
+  num_zips_found=$(find $EXPERIMENT_HOME/$e.zip -maxdepth 0 -type f 2> /dev/null | wc -l)
+
+  if [[ $num_zips_found == 0 ]]; then
+    # We found no experiments with matching names.
+    echo "Experiment $e not found"
+    exit 1
   fi
+  if [[ $num_zips_found -lt $num_dirs_found ]]; then
+    # We found some experiments which don't have an
+    # original zip file.
+    echo "Some experiments do not have original zip file. $num_zips_found zips, $num_dirs_found dirs"
+    exit 1
+  fi
+
+  # Then add any found zipped experiment directories.
+  # that have not been added yet.
+  for zipped_exp_dir in $(find $EXPERIMENT_HOME/$e.zip -maxdepth 0 -type f); do
+    exp_name=$(basename $zipped_exp_dir)
+    unzipped_exp_name=${exp_name%.zip}
+    unzipped_exp_name=$(echo -e "$unzipped_exp_name" | tr -d '[:space:]')
+    if ! contains $unzipped_exp_name $unzipped_exp_name_map_zipped_exp_dir; then
+      unzipped_exp_name_map_zipped_exp_dir[$unzipped_exp_name]=$zipped_exp_dir
+    fi
+  done
+done
+
+# Set all the experiment names and directories found.
+exp_dirs_found=()
+exp_names_found=()
+for exp_name in "${!unzipped_exp_name_map_zipped_exp_dir[@]}"; do
+  exp_dir=${unzipped_exp_name_map_zipped_exp_dir[$exp_name]}
+  exp_names_found+=($exp_name)
+  exp_dirs_found+=($exp_dir)
 done
 
 # Prompt the user whether they wish to process all experiments
