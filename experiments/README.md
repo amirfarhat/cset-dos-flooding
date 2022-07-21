@@ -36,12 +36,13 @@ This subdirectory contains groupings of experiments used to generate numeric res
 
 ## Downloading Raw Experiment Data
 
-Experiment data does not come with the `git` repository due to storage constraints. To download the experiment data, invoke the [`download-experiments.sh`]() script.
+Experiment data does not come with the `git` repository due to storage constraints. To download the experiment data, invoke the [`download-experiments.sh`]() script **from the experiments directory** like below:
+```shell
+user@server:~/cset-dos-flooding/experiments$ ./download-experiments.sh
+```
 
-## Processing Single Experiments
+## Grouping and Processing Experiments
 
-TODO
+After the download, experiments will be in compressed and unprocessed form. To uncompress and process the experiments, you can make use of the [`set-up-experiments.sh`]() script. It first uncompresses and processes the experiments in groups (and in smaller batches if needed for cpu/memory constraints), and then groups the experiments into the groups mentioned above. 
 
-## Grouping Experiments Together
-
-TODO
+Note that processing works best on machines with many cores. Additionally, the order of groups and batches specified in [`set-up-experiments.sh`]() assumes that the processing machine **must have at least 48GB of free RAM**. For machines with less RAM, re-order the groupings to have have fewer experiments per batch.
