@@ -1,5 +1,16 @@
 #!/bin/bash
 
+# Helper to check if a bash array contains
+# a supplied value. Returns 1 if the item is
+# contained, and 0 otherwise.
+contains() {
+  if [ -v '$2[$1]' ]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
 # Helper to check if a supplied file exists.
 check_present() {
   file_to_check=$1
